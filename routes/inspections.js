@@ -6,8 +6,11 @@ const {
   TestChecklist, 
   Question, 
   InspectionImage, 
-  Site 
+  Site,
+  Sequelize 
 } = require('../models');
+
+const { Op } = Sequelize;
 
 // Get all inspections
 router.get('/', async (req, res) => {
@@ -44,6 +47,7 @@ router.get('/', async (req, res) => {
       data: rows
     });
   } catch (error) {
+    console.error('Error fetching inspections:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -70,11 +74,12 @@ router.get('/:id', async (req, res) => {
 
     res.json(inspection);
   } catch (error) {
+    console.error('Error fetching inspection:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Create inspection with all related data
+// Create inspection with all related data - FIXED
 router.post('/', async (req, res) => {
   const t = await Inspection.sequelize.transaction();
   
@@ -88,60 +93,150 @@ router.post('/', async (req, res) => {
       site 
     } = req.body;
 
+    console.log('Received inspection data:', JSON.stringify(inspection, null, 2));
+
     // Create or find site
     let siteRecord = null;
-    if (site) {
+    if (site && site.name) {
       [siteRecord] = await Site.findOrCreate({
         where: { name: site.name },
-        defaults: site,
+        defaults: {
+          name: site.name,
+          address: site.address || null,
+          city: site.city || null,
+          country: site.country || null,
+          siteRepresentative: site.siteRepresentative || null
+        },
         transaction: t
       });
     }
 
-    // Create inspection
-    const newInspection = await Inspection.create({
-      ...inspection,
+    // Clean inspection data - remove undefined and empty strings
+    const cleanInspection = {
+      inspectionReference: inspection.inspectionReference,
+      inspectionType: inspection.inspectionType || 'PSI',
+      inspectionDate: inspection.inspectionDate,
+      plannedDate: inspection.plannedDate || null,
+      overallResult: inspection.overallResult || 'N/A',
+      inspectorRemark: inspection.inspectorRemark || null,
+      inspectorName: inspection.inspectorName || null,
+      inspectorOrganization: inspection.inspectorOrganization || null,
+      fcaTotalScore: inspection.fcaTotalScore ? parseFloat(inspection.fcaTotalScore) : null,
+      fcaScoreExcluded: inspection.fcaScoreExcluded ? parseFloat(inspection.fcaScoreExcluded) : null,
+      timeline: inspection.timeline || null,
+      timeCost: inspection.timeCost || null,
+      yesCount: inspection.yesCount ? parseInt(inspection.yesCount) : 0,
+      naCount: inspection.naCount ? parseInt(inspection.naCount) : 0,
+      isSafetyFailed: inspection.isSafetyFailed || false,
+      productSafetyFailCount: inspection.productSafetyFailCount || 0,
+      isReaudit: inspection.isReaudit || false,
+      lastFcaRcloudNumber: inspection.lastFcaRcloudNumber || null,
+      lastFcaTotalScore: inspection.lastFcaTotalScore ? parseFloat(inspection.lastFcaTotalScore) : null,
+      generatedBy: inspection.generatedBy || 'QualiGuard',
+      generatedDate: inspection.generatedDate || new Date(),
       siteId: siteRecord ? siteRecord.id : null
-    }, { transaction: t });
+    };
+
+    console.log('Clean inspection data:', JSON.stringify(cleanInspection, null, 2));
+
+    // Create inspection
+    const newInspection = await Inspection.create(cleanInspection, { transaction: t });
+
+    console.log('Inspection created with ID:', newInspection.id);
 
     // Create products
     if (products && products.length > 0) {
-      await Product.bulkCreate(
-        products.map(p => ({ ...p, inspectionId: newInspection.id })),
-        { transaction: t }
-      );
+      const cleanProducts = products.map(p => ({
+        inspectionId: newInspection.id,
+        poRef: p.poRef || null,
+        name: p.name,
+        sku: p.sku || null,
+        description: p.description || null,
+        shipmentDate: p.shipmentDate || null,
+        orderedQuantity: p.orderedQuantity || 0,
+        orderedUnit: p.orderedUnit || 'Pcs',
+        producedQuantity: p.producedQuantity || 0,
+        producedPercentage: p.producedPercentage || null,
+        packedQuantity: p.packedQuantity || 0,
+        packedPercentage: p.packedPercentage || null,
+        entityResponsible: p.entityResponsible || null,
+        productionSite: p.productionSite || null
+      }));
+
+      await Product.bulkCreate(cleanProducts, { transaction: t });
+      console.log('Products created:', cleanProducts.length);
     }
 
     // Create test checklists
     if (testChecklists && testChecklists.length > 0) {
-      await TestChecklist.bulkCreate(
-        testChecklists.map(tc => ({ ...tc, inspectionId: newInspection.id })),
-        { transaction: t }
-      );
+      const cleanChecklists = testChecklists.map(tc => ({
+        inspectionId: newInspection.id,
+        checklistName: tc.checklistName,
+        result: tc.result || null,
+        fcaForm: tc.fcaForm || null,
+        form25Result: tc.form25Result || null,
+        form25Conductor: tc.form25Conductor || null,
+        mcoIssuedDate: tc.mcoIssuedDate || null,
+        form25CompletedDate: tc.form25CompletedDate || null,
+        hasClosedMeeting: tc.hasClosedMeeting || false,
+        findingsShared: tc.findingsShared || false
+      }));
+
+      await TestChecklist.bulkCreate(cleanChecklists, { transaction: t });
+      console.log('Test checklists created:', cleanChecklists.length);
     }
 
     // Create questions
     if (questions && questions.length > 0) {
-      const createdQuestions = await Question.bulkCreate(
-        questions.map(q => ({ ...q, inspectionId: newInspection.id })),
-        { transaction: t, returning: true }
-      );
+      const cleanQuestions = questions.map(q => ({
+        inspectionId: newInspection.id,
+        questionNumber: q.questionNumber,
+        section: q.section,
+        sectionType: q.sectionType || null,
+        maxScore: q.maxScore || 0,
+        questionText: q.questionText,
+        answer: q.answer || null,
+        status: q.status || null,
+        remarks: q.remarks || null,
+        issues: q.issues || null
+      }));
+
+      const createdQuestions = await Question.bulkCreate(cleanQuestions, { 
+        transaction: t, 
+        returning: true 
+      });
+      console.log('Questions created:', createdQuestions.length);
 
       // Create images if provided
       if (images && images.length > 0) {
-        const imageRecords = images.map(img => ({
-          ...img,
-          inspectionId: newInspection.id,
-          questionId: createdQuestions.find(q => 
-            q.questionNumber === img.questionNumber
-          )?.id
-        }));
+        const imageRecords = [];
         
-        await InspectionImage.bulkCreate(imageRecords, { transaction: t });
+        for (const img of images) {
+          const question = createdQuestions.find(q => 
+            q.questionNumber === img.questionNumber
+          );
+          
+          if (question) {
+            imageRecords.push({
+              inspectionId: newInspection.id,
+              questionId: question.id,
+              imagePath: img.imagePath || null,
+              imageUrl: img.imageUrl || null,
+              caption: img.caption || null,
+              imageType: img.imageType || 'evidence'
+            });
+          }
+        }
+        
+        if (imageRecords.length > 0) {
+          await InspectionImage.bulkCreate(imageRecords, { transaction: t });
+          console.log('Images created:', imageRecords.length);
+        }
       }
     }
 
     await t.commit();
+    console.log('Transaction committed successfully');
 
     // Fetch complete inspection
     const completeInspection = await Inspection.findByPk(newInspection.id, {
@@ -160,7 +255,13 @@ router.post('/', async (req, res) => {
     res.status(201).json(completeInspection);
   } catch (error) {
     await t.rollback();
-    res.status(500).json({ error: error.message });
+    console.error('Error creating inspection:', error);
+    console.error('Error details:', error.message);
+    console.error('Stack trace:', error.stack);
+    res.status(500).json({ 
+      error: error.message,
+      details: error.errors ? error.errors.map(e => e.message) : []
+    });
   }
 });
 
@@ -176,6 +277,7 @@ router.put('/:id', async (req, res) => {
     await inspection.update(req.body);
     res.json(inspection);
   } catch (error) {
+    console.error('Error updating inspection:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -192,6 +294,7 @@ router.delete('/:id', async (req, res) => {
     await inspection.destroy();
     res.json({ message: 'Inspection deleted successfully' });
   } catch (error) {
+    console.error('Error deleting inspection:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -216,11 +319,9 @@ router.get('/stats/summary', async (req, res) => {
         : 0
     });
   } catch (error) {
+    console.error('Error fetching stats:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 module.exports = router;
-
-
-// API endpoints for inspections

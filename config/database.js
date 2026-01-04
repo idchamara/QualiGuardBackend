@@ -2,12 +2,15 @@ require('dotenv').config();
 
 module.exports = {
   development: {
-    username: process.env.DB_USER || 'sa',
-    password: process.env.DB_PASSWORD,
+    username: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD, 
     database: process.env.DB_NAME || 'qualiguard',
     host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 1433,
+    port: process.env.DB_PORT || 5432,
     dialect: 'postgres',
+    dialectOptions: {
+      ssl: false
+    },
     pool: {
       max: 5,
       min: 0,
@@ -20,8 +23,14 @@ module.exports = {
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
     host: process.env.DB_HOST,
-    port: process.env.DB_PORT || 1433,
+    port: process.env.DB_PORT || 5432,
     dialect: 'postgres',
+    dialectOptions: {
+      ssl: {
+        require: true,
+        rejectUnauthorized: false
+      }
+    },
     pool: {
       max: 10,
       min: 2,
